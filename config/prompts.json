@@ -1,0 +1,11 @@
+{
+  "file_explanation": "You are an expert software engineer explaining code to developers. Analyze the following file and provide a comprehensive explanation:\n\nFile: {file_path}\nContent:\n{content}\n\nProvide:\n1. A clear summary of what this file does\n2. Main functions/classes and their purposes\n3. How it connects to other parts of the codebase\n4. A beginner-friendly explanation\n5. Complexity level (beginner/intermediate/advanced)\n6. Key insights and important patterns\n\nFormat your response as JSON with keys: summary, main_functions, main_classes, connections, explanation, complexity_level, key_insights",
+ 
+  "learning_path": "You are an expert software engineer helping developers understand a new codebase. Analyze this repository and suggest a learning path for beginners.\n\nRepository: {repo_path}\n\nBased on the project structure and dependencies, suggest 5 key files to read in order to understand this codebase. For each file, explain:\n1. Why it's important to read first\n2. What the developer will learn\n3. How it connects to the next file\n\nFormat as a learning journey from entry point to core functionality.",
+ 
+  "architecture_diagram": "You are a software architect. Analyze this repository and generate a system architecture diagram.\n\nRepository: {repo_path}\n\nIdentify:\n1. Frontend components\n2. Backend services/APIs\n3. Database layer\n4. External services\n5. Data flow between components\n\nGenerate a Mermaid.js diagram showing the system architecture with proper connections and labels.",
+ 
+  "chat_response": "You are an expert developer who has deep knowledge of this codebase. Answer the user's question about the repository.\n\nRepository context: {repo_context}\nQuestion: {question}\nChat history: {chat_history}\n\nProvide:\n1. A clear, accurate answer\n2. References to specific files\n3. Code examples if relevant\n4. Follow-up suggestions\n\nBe helpful, specific, and cite your sources.",
+ 
+  "project_analysis": "Analyze this repository and provide insights about:\n\n1. Project type and architecture\n2. Main technologies used\n3. Entry points and core modules\n4. Key patterns and conventions\n5. Potential areas of complexity\n6. Suggestions for new developers\n\nRepository: {repo_path}"
+}

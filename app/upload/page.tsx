@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react'
 import { motion, AnimatePresence } from "framer-motion"
 import { Github, Upload } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { useAnalysisStore } from "../../lib/store"
 
 const STEPS = ["Parsing", "Indexing", "Analysing", "Complete"]
 
@@ -15,6 +16,7 @@ function fmtSize(b: number) {
 
 const Page = () => {
   const router = useRouter()
+  const { setAnalysisData, setRepoUrl } = useAnalysisStore()
   const [url, setUrl] = useState("")
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
@@ -22,11 +24,17 @@ const Page = () => {
   const [stepIndex, setStepIndex] = useState(0)
   const [error, setError] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   const addFiles = (newFiles: File[]) => {
-    setFiles(prev => [...prev, ...newFiles])
-    setError("")
+    // Only accept zip files for backend compatibility
+    const zipFiles = newFiles.filter(f => f.name.endsWith('.zip'))
+    if (zipFiles.length > 0) {
+      setFiles([zipFiles[0]]) // Just take the first zip
+      setError("")
+      setUrl("") // Clear url if file is selected
+    } else {
+      setError("Please upload a .zip repository archive")
+    }
   }
 
   const removeFile = (i: number) => setFiles(prev => prev.filter((_, idx) => idx !== i))
@@ -37,34 +45,69 @@ const Page = () => {
     addFiles(Array.from(e.dataTransfer.files))
   }
 
-  const startAnalysis = () => {
+  const startAnalysis = async () => {
     if (!url && files.length === 0) {
-      setError("Add a URL or upload files first")
+      setError("Add a URL or upload a ZIP file first")
       setTimeout(() => setError(""), 2200)
       return
     }
+    
     setLoading(true)
     setStepIndex(0)
-    if (timerRef.current) clearInterval(timerRef.current)
-    let i = 0
-    timerRef.current = setInterval(() => {
-      i = Math.min(i + 1, STEPS.length - 1)
-      setStepIndex(i)
-      if (i === STEPS.length - 1) clearInterval(timerRef.current!)
-    }, 1300)
+    setError("")
+    
+    // Simulate steps progress while waiting
+    const progressInterval = setInterval(() => {
+      setStepIndex(prev => prev < 2 ? prev + 1 : prev)
+    }, 1500)
+
+    try {
+      let res;
+      if (url) {
+        setRepoUrl(url);
+        res = await fetch("http://127.0.0.1:8000/api/github", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+      } else if (files.length > 0) {
+        setRepoUrl(files[0].name);
+        const formData = new FormData();
+        formData.append("file", files[0]);
+        res = await fetch("http://127.0.0.1:8000/api/upload", {
+          method: "POST",
+          body: formData
+        });
+      }
+
+      const data = await res?.json();
+      clearInterval(progressInterval);
+      
+      if (res?.ok && data.status === "success") {
+        setStepIndex(3); // Complete
+        setAnalysisData(data);
+      } else {
+        throw new Error(data?.detail || "Analysis failed");
+      }
+    } catch (err: any) {
+      clearInterval(progressInterval);
+      setLoading(false);
+      setError(err.message);
+      setTimeout(() => setError(""), 5000);
+    }
   }
 
   const hintText = error
     ? error
     : files.length === 0
     ? "No files selected"
-    : `${files.length} file${files.length > 1 ? "s" : ""} selected`
+    : `Selected: ${files[0].name}`
 
   return (
-    // ✅ FULL SCREEN WRAPPER
-    <div className="h-full w-full flex flex-col items-center justify-center">
+    // FULL SCREEN WRAPPER
+    <div className="h-full bg-white dark:bg-neutral-950 w-full flex flex-col items-center justify-center">
       
-      {/* ✅ CENTERED CONTENT */}
+      {/* CENTERED CONTENT */}
       <div
         className="w-full max-w-5xl px-8 flex flex-col h-full justify-center"
         style={{ fontFamily: "'JetBrains Mono', monospace" }}
@@ -111,7 +154,7 @@ const Page = () => {
                 transition={{ delay: 0.2 }}
                 className="text-[11px] font-light text-neutral-400 leading-[1.6] mb-8 tracking-wide"
               >
-                Paste a GitHub link or drop your source files.<br />
+                Paste a GitHub link or drop your source archive.<br />
                 Deep AI analysis in seconds.
               </motion.p>
 
@@ -131,8 +174,11 @@ const Page = () => {
                   <input
                     type="url"
                     value={url}
-                    onChange={e => setUrl(e.target.value)}
-                    placeholder="github.com/username/repository"
+                    onChange={e => {
+                      setUrl(e.target.value)
+                      if(e.target.value) setFiles([])
+                    }}
+                    placeholder="https://github.com/username/repository"
                     className="flex-1 bg-transparent outline-none text-[11px] text-neutral-900 dark:text-white"
                   />
                 </div>
@@ -155,7 +201,7 @@ const Page = () => {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  multiple
+                  accept=".zip"
                   className="hidden"
                   onChange={e => e.target.files && addFiles(Array.from(e.target.files))}
                 />
@@ -165,17 +211,17 @@ const Page = () => {
                   onDragOver={e => { e.preventDefault(); setDragging(true) }}
                   onDragLeave={() => setDragging(false)}
                   onDrop={handleDrop}
-                  className="border border-neutral-200 dark:border-neutral-800 py-10 md:py-12 text-center cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors flex flex-col items-center justify-center"
+                  className={`border border-neutral-200 dark:border-neutral-800 py-10 md:py-12 text-center cursor-pointer transition-colors flex flex-col items-center justify-center ${dragging ? 'bg-neutral-100 dark:bg-neutral-800' : 'hover:bg-neutral-50 dark:hover:bg-neutral-900'}`}
                 >
                   <Upload className="w-4 h-4 text-neutral-300 dark:text-neutral-600 mb-5" strokeWidth={1} />
-                  <p className="text-[11px] text-neutral-500 mb-2.5">Drop files here</p>
-                  <p className="text-[9px] text-neutral-300 dark:text-neutral-600 tracking-[0.2em] uppercase">.js .ts .py .go .rs .java .cpp</p>
+                  <p className="text-[11px] text-neutral-500 mb-2.5">Drop your .ZIP repository here</p>
+                  <p className="text-[9px] text-neutral-300 dark:text-neutral-600 tracking-[0.2em] uppercase">.ZIP ARCHIVES ONLY</p>
                 </div>
               </motion.div>
 
               {/* Bottom */}
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="flex justify-between items-end mt-10">
-                <span className="text-[10px] text-neutral-400 tracking-widest uppercase">{hintText}</span>
+                <span className={`text-[10px] text-neutral-400 tracking-widest uppercase ${error ? 'text-red-500' : ''}`}>{hintText}</span>
                 <button onClick={startAnalysis} className="border border-neutral-200 dark:border-neutral-800 px-8 py-3 text-[9px] tracking-[0.2em] font-medium hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors flex items-center gap-2">
                   ANALYSE <span className="transform rotate-45 text-neutral-400">↗</span>
                 </button>
@@ -209,10 +255,19 @@ const Page = () => {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.5 }}
                   onClick={() => router.push('/codebase')}
-                  className="mt-12 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-white text-black px-8 py-3 text-[10px] tracking-[0.2em] font-bold hover:bg-neutral-200 transition-colors flex items-center gap-2"
+                  className="mt-12 border border-neutral-200 dark:border-neutral-800 bg-black text-white dark:bg-white dark:text-black px-8 py-3 text-[10px] tracking-[0.2em] font-bold hover:opacity-80 transition-opacity flex items-center gap-2"
                 >
                   VIEW RESULTS
                 </motion.button>
+              )}
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="mt-8 text-red-500 text-sm font-mono text-center max-w-lg"
+                >
+                  {error}
+                </motion.div>
               )}
             </motion.div>
           )}

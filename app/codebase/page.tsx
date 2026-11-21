@@ -1,349 +1,410 @@
 "use client"
 
-import React, { useState } from "react"
-import { motion, AnimatePresence } from "framer-motion"
-import { Check, ChevronDown } from "lucide-react"
+import { useState, useEffect, useCallback } from "react"
+import { Github, Folder, FileText, ChevronDown, ChevronRight, GitBranch, Play, Save, Layers, List } from "lucide-react"
+import { useAnalysisStore } from "../../lib/store"
+import { useRouter } from "next/navigation"
+import ReactFlow, { 
+  Background, 
+  Controls, 
+  Node, 
+  Edge, 
+  MarkerType,
+  Position
+} from "react-flow-renderer"
 
-type Sub = { t: string; done: boolean; tag?: string }
-type Task = {
-  id: number
-  title: string
-  status: "done" | "active" | "pending"
-  badges: string[]
-  required?: boolean
-  subs: Sub[]
-}
+export default function CodebaseViewer() {
+  const router = useRouter()
+  const { analysisData, selectedFile, setSelectedFile, repoUrl, setAnalysisData } = useAnalysisStore()
+  
+  const [promptOpen, setPromptOpen] = useState(false)
+  const [expandedDirs, setExpandedDirs] = useState(new Set<string>())
+  const [prompts, setPrompts] = useState<Record<string, string>>({})
+  const [selectedPromptKey, setSelectedPromptKey] = useState("file_summary")
+  const [promptValue, setPromptValue] = useState("")
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false)
+  const [isRunningAnalysis, setIsRunningAnalysis] = useState(false)
 
-const INITIAL: Task[] = [
-  {
-    id: 0,
-    title: "Build GitHub URL input + file upload UI",
-    status: "done",
-    badges: ["React", "Tailwind", "Framer Motion"],
-    subs: [
-      { t: "GitHub URL text input with validation", done: true },
-      { t: "Drag-and-drop file upload zone", done: true },
-      { t: "File pill list with remove controls", done: true },
-      { t: "Animated progress bar + step indicators", done: true },
-      { t: "Status bar with pulse indicator", done: true },
-    ],
-  },
-  {
-    id: 1,
-    title: "Build File Tree Viewer component",
-    status: "pending",
-    badges: ["React", "Recursive", "Virtualized"],
-    subs: [
-      { t: "Recursive folder/file tree renderer", done: false, tag: "core" },
-      { t: "Expand / collapse folder nodes", done: false, tag: "UX" },
-      { t: "File type icons (svg, ts, py, etc.)", done: false, tag: "icons" },
-      { t: "Search & filter files by name", done: false, tag: "search" },
-      { t: "Highlight active/selected file", done: false, tag: "state" },
-      { t: "Virtual scroll for large repos", done: false, tag: "perf" },
-    ],
-  },
-  {
-    id: 2,
-    title: "Build Dependency Graph Visualization",
-    status: "pending",
-    badges: ["D3.js", "React Flow", "Force-directed"],
-    subs: [
-      { t: "Parse import/require statements from files", done: false, tag: "parser" },
-      { t: "Build adjacency list of module deps", done: false, tag: "core" },
-      { t: "Render force-directed graph with D3", done: false, tag: "D3" },
-      { t: "Node hover: show file name + dep count", done: false, tag: "UX" },
-      { t: "Click node → open File Explanation Panel", done: false, tag: "nav" },
-      { t: "Zoom, pan, reset controls", done: false, tag: "controls" },
-      { t: "Highlight circular dependencies in red", done: false, tag: "analysis" },
-    ],
-  },
-  {
-    id: 3,
-    title: "Build File Explanation Panel",
-    status: "pending",
-    badges: ["Claude API", "Streaming", "AI"],
-    subs: [
-      { t: "Slide-in side panel with file context header", done: false, tag: "layout" },
-      { t: "Stream AI summary token by token", done: false, tag: "streaming" },
-      { t: "Show: purpose, exports, key functions", done: false, tag: "content" },
-      { t: "Code snippet preview with syntax highlight", done: false, tag: "code" },
-      { t: "Complexity + lines of code metrics", done: false, tag: "metrics" },
-      { t: "Related files section (via dep graph)", done: false, tag: "links" },
-    ],
-  },
-  {
-    id: 4,
-    title: "Build Prompt Editor UI",
-    status: "pending",
-    required: true,
-    badges: ["Monaco Editor", "Claude API", "Required"],
-    subs: [
-      { t: "Monaco editor for system prompt editing", done: false, tag: "editor" },
-      { t: "Variable token insertion ({filename}, {tree})", done: false, tag: "tokens" },
-      { t: "Live preview of prompt with context injected", done: false, tag: "preview" },
-      { t: "Run prompt → stream response in panel", done: false, tag: "exec" },
-      { t: "Save / load named prompt presets", done: false, tag: "persist" },
-      { t: "Diff view: compare original vs edited prompt", done: false, tag: "diff" },
-      { t: "Reviewer annotation sidebar", done: false, tag: "review" },
-    ],
-  },
-]
+  // Redirect if no data
+  useEffect(() => {
+    if (!analysisData) {
+      router.push('/upload')
+    }
+  }, [analysisData, router])
 
-export default function Page() {
-  const [tasks, setTasks] = useState<Task[]>(INITIAL)
-  const [open, setOpen] = useState<boolean[]>(INITIAL.map((t) => t.status === "done"))
+  // Fetch prompts on mount
+  useEffect(() => {
+    fetch("http://127.0.0.1:8000/api/prompts")
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "success") {
+          setPrompts(data.prompts)
+          setPromptValue(data.prompts["file_summary"] || "")
+        }
+      })
+      .catch(err => console.error("Failed to fetch prompts:", err))
+  }, [])
 
-  const completedCount = tasks.filter((t) => t.subs.every((s) => s.done)).length
-  const progressPct = Math.round((completedCount / tasks.length) * 100)
+  // Update prompt value when key changes
+  useEffect(() => {
+    if (prompts[selectedPromptKey]) {
+      setPromptValue(prompts[selectedPromptKey])
+    }
+  }, [selectedPromptKey, prompts])
 
-  const toggleTask = (i: number) => {
-    setTasks((prev) => {
-      const next = [...prev]
-      const allDone = next[i].subs.every((s) => s.done)
-      next[i] = {
-        ...next[i],
-        subs: next[i].subs.map((s) => ({ ...s, done: !allDone })),
+  if (!analysisData) {
+    return <div className="h-screen bg-white dark:bg-neutral-950 flex items-center justify-center font-mono text-xs text-neutral-500">Redirecting...</div>
+  }
+
+  // Build tree
+  const buildTree = (files: Record<string, string>) => {
+    const root: any = {};
+    for (const path of Object.keys(files)) {
+      const parts = path.split('/');
+      let current = root;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (!current[part]) {
+          current[part] = i === parts.length - 1 ? null : {};
+        }
+        current = current[part];
       }
-      return next
-    })
+    }
+    return root;
+  };
+
+  const fileTree = analysisData.files ? buildTree(analysisData.files) : {};
+
+  const toggleDir = (path: string) => {
+    const newExpanded = new Set(expandedDirs);
+    if (newExpanded.has(path)) newExpanded.delete(path);
+    else newExpanded.add(path);
+    setExpandedDirs(newExpanded);
+  };
+
+  const renderTree = (node: any, path = '') => {
+    return Object.entries(node).map(([name, children]) => {
+      const currentPath = path ? `${path}/${name}` : name;
+      const isDir = children !== null;
+      const isExpanded = expandedDirs.has(currentPath);
+
+      if (isDir) {
+        return (
+          <div key={currentPath} className="ml-2">
+            <div 
+              className="flex items-center gap-1.5 cursor-pointer hover:text-neutral-900 dark:hover:text-white py-1 opacity-80"
+              onClick={() => toggleDir(currentPath)}
+            >
+              {isExpanded ? <ChevronDown size={12} className="text-neutral-400" /> : <ChevronRight size={12} className="text-neutral-400" />}
+              <Folder size={10} className="text-neutral-400" />
+              <span className="text-[10px] tracking-wide">{name}/</span>
+            </div>
+            {isExpanded && <div className="ml-1 border-l border-neutral-200 dark:border-neutral-800 pl-1">{renderTree(children, currentPath)}</div>}
+          </div>
+        );
+      }
+
+      return (
+        <div 
+          key={currentPath} 
+          className={`ml-3 flex items-center gap-2 cursor-pointer py-1 ${selectedFile === currentPath ? 'text-blue-500 font-medium' : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'}`}
+          onClick={() => setSelectedFile(currentPath)}
+        >
+          <FileText size={10} className={selectedFile === currentPath ? 'text-blue-500' : 'text-neutral-400'} />
+          <span className="text-[10px] tracking-wide truncate">{name}</span>
+        </div>
+      );
+    });
+  };
+
+  const handleSavePrompt = async () => {
+    setIsSavingPrompt(true)
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/prompts/${selectedPromptKey}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: promptValue })
+      })
+      if (res.ok) {
+        setPrompts(prev => ({ ...prev, [selectedPromptKey]: promptValue }))
+        alert("Prompt saved successfully!")
+      }
+    } catch (err) {
+      console.error("Failed to save prompt:", err)
+    } finally {
+      setIsSavingPrompt(false)
+    }
   }
 
-  const toggleSub = (i: number, j: number) => {
-    setTasks((prev) => {
-      const next = [...prev]
-      const subs = next[i].subs.map((s, idx) =>
-        idx === j ? { ...s, done: !s.done } : s
-      )
-      next[i] = { ...next[i], subs }
-      return next
-    })
+  const handleRunAnalysis = async () => {
+    if (!selectedFile) {
+      alert("Please select a file to re-analyze.")
+      return
+    }
+    setIsRunningAnalysis(true)
+    try {
+      const res = await fetch("http://127.0.0.1:8000/api/explain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          filename: selectedFile, 
+          content: analysisData.files[selectedFile] || "" 
+        })
+      })
+      const data = await res.json()
+      if (data.status === "success") {
+        // Update summaries in global state
+        const newSummaries = { ...analysisData.summaries, [selectedFile]: data.explanation }
+        setAnalysisData({ ...analysisData, summaries: newSummaries })
+      }
+    } catch (err) {
+      console.error("Analysis failed:", err)
+    } finally {
+      setIsRunningAnalysis(false)
+    }
   }
 
-  const toggleOpen = (i: number) =>
-    setOpen((prev) => prev.map((v, idx) => (idx === i ? !v : v)))
+  // ReactFlow Graph setup
+  const nodes: Node[] = (analysisData.graph?.nodes || []).map((node: any, idx: number) => ({
+    id: node.id,
+    data: { label: node.data?.label || node.id },
+    position: { x: (idx % 5) * 200, y: Math.floor(idx / 5) * 100 },
+    style: { 
+      fontSize: '8px', 
+      background: '#fff', 
+      border: '1px solid #e5e7eb', 
+      padding: '4px',
+      borderRadius: '2px',
+      width: 120,
+      textAlign: 'center' as const
+    }
+  }))
+
+  const edges: Edge[] = (analysisData.graph?.edges || []).map((edge: any) => ({
+    id: `e-${edge.source}-${edge.target}`,
+    source: edge.source,
+    target: edge.target,
+    animated: true,
+    style: { stroke: '#94a3b8', strokeWidth: 1 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' }
+  }))
+
+  const numFiles = Object.keys(analysisData.files || {}).length;
+  const numDeps = nodes.length;
 
   return (
     <div
-      className="min-h-screen bg-white dark:bg-neutral-950 px-6 py-10"
+      className="flex flex-col h-screen bg-white dark:bg-neutral-950 overflow-hidden"
       style={{ fontFamily: "'JetBrains Mono', monospace" }}
     >
-      <div className="max-w-[640px] mx-auto">
 
-        {/* Top bar */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex items-center justify-between pb-5 mb-8 border-b border-neutral-100 dark:border-neutral-800"
-        >
-          <h1
-            className="text-2xl font-light tracking-tight text-neutral-900 dark:text-white"
+      {/* ── Top Bar ── */}
+      <div className="flex items-center h-11 border-b border-neutral-100 dark:border-neutral-800 flex-shrink-0">
+        <div className="flex items-center px-4 h-full border-r border-neutral-100 dark:border-neutral-800 flex-shrink-0">
+          <span
+            className="text-[.95rem] font-light tracking-tight text-neutral-900 dark:text-white"
             style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontWeight: 300 }}
           >
             codebase<em className="text-neutral-300 dark:text-neutral-600">.</em>viewer
-          </h1>
-          <div className="flex items-center gap-2">
-            <span className="w-[5px] h-[5px] rounded-full bg-green-400 animate-pulse" />
-            <span className="text-[10px] tracking-[0.14em] text-neutral-400">implementation plan</span>
-          </div>
-        </motion.div>
-
-        {/* Progress */}
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="mb-10"
-        >
-          <div className="flex items-baseline justify-between mb-2">
-            <span className="text-[9px] tracking-[0.2em] uppercase text-neutral-400">Overall progress</span>
-            <span
-              className="text-2xl font-light text-neutral-900 dark:text-white"
-              style={{ fontFamily: "'Cormorant Garamond', serif" }}
-            >
-              {completedCount} / {tasks.length}
-            </span>
-          </div>
-          <div className="w-full h-px bg-neutral-100 dark:bg-neutral-800 relative overflow-hidden">
-            <motion.div
-              className="absolute top-0 left-0 h-full bg-neutral-900 dark:bg-white"
-              animate={{ width: `${progressPct}%` }}
-              transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-            />
-          </div>
-          <div className="flex gap-6 mt-2">
-            {[
-              ["Completed", completedCount],
-              ["Remaining", tasks.length - completedCount],
-              ["Required", tasks.filter((t) => t.required && !t.subs.every((s) => s.done)).length],
-            ].map(([label, val]) => (
-              <span key={label as string} className="text-[10px] text-neutral-400 tracking-[0.06em]">
-                {label} <span className="text-neutral-600 dark:text-neutral-300">{val}</span>
-              </span>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Task list */}
-        <div>
-          {tasks.map((task, i) => {
-            const allDone = task.subs.every((s) => s.done)
-            const someDone = task.subs.some((s) => s.done)
-            return (
-              <motion.div
-                key={task.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.12 + i * 0.06 }}
-                className="border-t border-neutral-100 dark:border-neutral-800 last:border-b"
-              >
-                {/* Task row */}
-                <div
-                  className="flex items-start gap-3 py-4 cursor-pointer group"
-                  onClick={() => toggleOpen(i)}
-                >
-                  {/* Checkbox */}
-                  <div
-                    onClick={(e) => { e.stopPropagation(); toggleTask(i) }}
-                    className={`w-[14px] h-[14px] border flex items-center justify-center flex-shrink-0 mt-[2px] transition-colors cursor-pointer ${
-                      allDone
-                        ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white"
-                        : someDone
-                        ? "border-neutral-400 dark:border-neutral-500"
-                        : "border-neutral-300 dark:border-neutral-600"
-                    }`}
-                  >
-                    {allDone && (
-                      <Check
-                        className="w-[8px] h-[8px] text-white dark:text-neutral-900"
-                        strokeWidth={2.5}
-                      />
-                    )}
-                    {someDone && !allDone && (
-                      <div className="w-[6px] h-[1px] bg-neutral-400" />
-                    )}
-                  </div>
-
-                  {/* Number */}
-                  <span className="text-[9px] tracking-[0.1em] text-neutral-300 dark:text-neutral-600 w-4 text-right flex-shrink-0 mt-[2px]">
-                    0{i + 1}
-                  </span>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-[11px] leading-relaxed tracking-[0.02em] transition-colors group-hover:text-neutral-900 dark:group-hover:text-white ${
-                      allDone
-                        ? "line-through text-neutral-300 dark:text-neutral-600"
-                        : "text-neutral-600 dark:text-neutral-400"
-                    }`}>
-                      {task.title}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                      {task.badges.map((b) => (
-                        <span
-                          key={b}
-                          className={`text-[8px] tracking-[0.08em] px-1.5 py-[2px] border ${
-                            b === "Required"
-                              ? "border-red-200 text-red-400 dark:border-red-800 dark:text-red-500"
-                              : allDone
-                              ? "border-neutral-100 dark:border-neutral-800 text-neutral-300 dark:text-neutral-600"
-                              : "border-neutral-200 dark:border-neutral-700 text-neutral-400"
-                          }`}
-                        >
-                          {b}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Right */}
-                  <div className="flex items-center gap-2.5 flex-shrink-0 mt-[1px]">
-                    <span className={`text-[9px] tracking-[0.1em] px-2 py-[2px] border ${
-                      allDone
-                        ? "border-green-200 text-green-500 dark:border-green-900 dark:text-green-400"
-                        : someDone
-                        ? "border-amber-200 text-amber-600 dark:border-amber-900 dark:text-amber-400"
-                        : "border-neutral-200 dark:border-neutral-700 text-neutral-400"
-                    }`}>
-                      {allDone ? "done" : someDone ? "in progress" : "pending"}
-                    </span>
-                    <ChevronDown
-                      className={`w-3 h-3 text-neutral-300 dark:text-neutral-600 transition-transform duration-200 ${
-                        open[i] ? "rotate-180" : ""
-                      }`}
-                    />
-                  </div>
-                </div>
-
-                {/* Sub-tasks */}
-                <AnimatePresence initial={false}>
-                  {open[i] && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <div className="pb-4 pl-[52px] flex flex-col">
-                        {task.subs.map((sub, j) => (
-                          <div
-                            key={j}
-                            className="flex items-start gap-2 py-[7px] border-t border-neutral-100 dark:border-neutral-800 first:border-t-0 cursor-pointer group/sub"
-                            onClick={() => toggleSub(i, j)}
-                          >
-                            <div className={`w-[10px] h-[10px] border flex items-center justify-center flex-shrink-0 mt-[3px] transition-colors ${
-                              sub.done
-                                ? "bg-neutral-400 dark:bg-neutral-500 border-neutral-400 dark:border-neutral-500"
-                                : "border-neutral-200 dark:border-neutral-700"
-                            }`}>
-                              {sub.done && (
-                                <svg width="6" height="6" viewBox="0 0 8 8" fill="none" stroke="white" strokeWidth="1.5">
-                                  <polyline points="1,4 3,6 7,2" />
-                                </svg>
-                              )}
-                            </div>
-                            <span className={`text-[10px] tracking-[0.02em] leading-relaxed flex-1 transition-colors group-hover/sub:text-neutral-700 dark:group-hover/sub:text-neutral-300 ${
-                              sub.done
-                                ? "line-through text-neutral-300 dark:text-neutral-600"
-                                : "text-neutral-500 dark:text-neutral-400"
-                            }`}>
-                              {sub.t}
-                            </span>
-                            {sub.tag && (
-                              <span className="text-[8px] tracking-[0.08em] px-1.5 py-[1px] border border-neutral-100 dark:border-neutral-800 text-neutral-300 dark:text-neutral-600 flex-shrink-0 mt-[3px]">
-                                {sub.tag}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            )
-          })}
+          </span>
         </div>
 
-        {/* Footer */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="mt-10 pt-5 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between"
+        <div className="flex items-center gap-2 flex-1 px-4 h-full border-r border-neutral-100 dark:border-neutral-800 min-w-0">
+          <Github className="w-3 h-3 text-neutral-300 dark:text-neutral-600 flex-shrink-0" strokeWidth={1.5} />
+          <span className="text-[10px] font-light text-neutral-600 dark:text-neutral-300 tracking-wide truncate">
+            {repoUrl}
+          </span>
+        </div>
+
+        <div className="flex items-center h-full flex-shrink-0">
+          <button onClick={() => router.push('/upload')} className="h-full px-4 text-[9px] tracking-[0.14em] uppercase text-neutral-400 border-l border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-700 dark:hover:text-white transition-colors">
+            Upload
+          </button>
+          <button onClick={() => router.push('/upload')} className="h-full px-4 text-[9px] tracking-[0.14em] uppercase bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 border-l border-neutral-100 dark:border-neutral-800 hover:opacity-75 transition-opacity">
+            New Analysis ↗
+          </button>
+        </div>
+      </div>
+
+      {/* ── Main ── */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* ── Left: File Tree ── */}
+        <div className="w-[250px] flex-shrink-0 border-r border-neutral-100 dark:border-neutral-800 flex flex-col overflow-hidden bg-neutral-50/50 dark:bg-neutral-900/20">
+          <PanelHeader label="File tree" num="02" />
+
+          <div className="flex-1 overflow-y-auto p-3">
+            {numFiles > 0 ? (
+              <div className="text-[11px] text-neutral-600 dark:text-neutral-400 space-y-0.5">
+                {renderTree(fileTree)}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-3 p-7 h-full">
+                <div className="w-7 h-7 border border-neutral-200 dark:border-neutral-700 flex items-center justify-center">
+                  <Folder className="w-3.5 h-3.5 text-neutral-300 dark:text-neutral-600" strokeWidth={1.2} />
+                </div>
+                <span className="text-[9px] tracking-[0.1em] text-neutral-300 dark:text-neutral-600 text-center leading-[1.8]">
+                  No repository<br />loaded yet
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Right: explanation top + graph bottom ── */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+
+          {/* File Explanation Panel */}
+          <div className="flex-1 flex flex-col border-b border-neutral-100 dark:border-neutral-800 overflow-hidden min-h-0 bg-white dark:bg-neutral-950">
+            <PanelHeader label="File explanation" num="04" />
+            <div className="flex flex-1 overflow-hidden">
+              {!selectedFile ? (
+                <div className="flex-1 flex flex-col items-start p-8 overflow-y-auto">
+                  <h4 className="text-[10px] tracking-[0.18em] uppercase text-blue-500 mb-4">Architecture Overview</h4>
+                  <div className="text-[11px] leading-[1.8] text-neutral-600 dark:text-neutral-300 prose prose-sm max-w-none prose-neutral dark:prose-invert">
+                    {analysisData.architecture_overview || "No overview available."}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-start p-8 overflow-y-auto relative">
+                  {isRunningAnalysis && (
+                    <div className="absolute inset-0 bg-white/50 dark:bg-neutral-950/50 flex items-center justify-center z-10">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                    </div>
+                  )}
+                  <h4 className="text-[10px] tracking-[0.18em] uppercase text-neutral-500 mb-2">Selected File</h4>
+                  <p className="text-[10px] text-blue-500 mb-6 font-bold bg-blue-50 dark:bg-blue-900/20 inline-block px-2 py-1 rounded border border-blue-100 dark:border-blue-900/50">{selectedFile}</p>
+                  <div className="text-[11px] leading-[1.8] text-neutral-600 dark:text-neutral-300 prose prose-sm max-w-none prose-neutral dark:prose-invert">
+                    {analysisData.summaries?.[selectedFile] || "No AI summary available for this file."}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Dependency Graph */}
+          <div className="h-[250px] flex-shrink-0 flex flex-col overflow-hidden bg-neutral-50 dark:bg-neutral-900/50 relative">
+            <PanelHeader label="Dependency graph" num="03" />
+            <div className="flex-1 overflow-hidden">
+              {nodes.length > 0 ? (
+                <ReactFlow 
+                  nodes={nodes} 
+                  edges={edges}
+                  fitView
+                  attributionPosition="bottom-right"
+                >
+                  <Background color="#d4d4d4" gap={22} size={0.5} />
+                  <Controls style={{ display: 'flex', flexDirection: 'row', gap: '4px', padding: '4px', borderRadius: '4px' }} />
+                </ReactFlow>
+              ) : (
+                <div className="flex-1 relative flex items-center justify-center h-full">
+                  <div className="relative z-10 flex flex-col items-center gap-2.5 bg-white/80 dark:bg-neutral-950/80 backdrop-blur-sm p-4 border border-neutral-200 dark:border-neutral-800 rounded">
+                    <p className="text-[9px] tracking-[0.1em] text-center text-neutral-600 dark:text-neutral-300 leading-[1.8]">
+                      No graph data available
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* ── Prompt Editor Bar ── */}
+      <div className="border-t border-neutral-100 dark:border-neutral-800 flex-shrink-0 bg-white dark:bg-neutral-950">
+        <button
+          onClick={() => setPromptOpen((v) => !v)}
+          className="w-full flex items-center justify-between px-4 h-[34px] hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
         >
-          <div className="flex items-center gap-2">
-            <span className="w-1 h-1 rounded-full bg-neutral-200 dark:bg-neutral-700" />
-            <span className="text-[9px] tracking-[0.12em] text-neutral-300 dark:text-neutral-600">
-              Next.js · TypeScript · Tailwind · shadcn/ui
+          <div className="flex items-center gap-2.5">
+            <span className="text-[9px] tracking-[0.18em] uppercase text-neutral-400">Prompt editor</span>
+            <span className="text-[8px] tracking-[0.08em] px-1.5 py-[2px] border border-neutral-200 dark:border-neutral-700 text-neutral-400 dark:text-neutral-500">
+              Editing: {selectedPromptKey}
             </span>
           </div>
-          <span className="text-[9px] tracking-[0.1em] text-neutral-300 dark:text-neutral-600">
-            {progressPct}% complete
-          </span>
-        </motion.div>
+          <div className="flex items-center gap-2">
+            <span className="text-[8px] tracking-[0.08em] px-1.5 py-[2px] border border-neutral-200 dark:border-neutral-700 text-neutral-400 dark:text-neutral-500">05</span>
+            <ChevronDown className={`w-3 h-3 text-neutral-400 transition-transform duration-200 ${promptOpen ? "rotate-180" : ""}`} />
+          </div>
+        </button>
 
+        {promptOpen && (
+          <div className="flex border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/30">
+            <div className="w-[150px] border-r border-neutral-100 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900/50 p-2 flex flex-col gap-1 overflow-y-auto max-h-[150px]">
+              {Object.keys(prompts).map(key => (
+                <button
+                  key={key}
+                  onClick={() => setSelectedPromptKey(key)}
+                  className={`text-[8px] text-left px-2 py-1.5 rounded transition-colors ${selectedPromptKey === key ? 'bg-blue-500 text-white' : 'hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-500'}`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 p-3 border-r border-neutral-100 dark:border-neutral-800">
+              <div className="bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 p-3 flex flex-col gap-1.5 h-[100px]">
+                <textarea 
+                  className="w-full h-full bg-transparent resize-none outline-none text-[10px] text-neutral-600 dark:text-neutral-300"
+                  placeholder="System instructions..."
+                  value={promptValue}
+                  onChange={(e) => setPromptValue(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-col w-[84px] flex-shrink-0 bg-white dark:bg-neutral-950">
+              <button
+                onClick={handleRunAnalysis}
+                disabled={isRunningAnalysis}
+                className="text-[9px] tracking-[0.12em] uppercase text-neutral-500 px-3 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white transition-colors border-b border-neutral-100 dark:border-neutral-800 flex items-center gap-2"
+              >
+                <Play size={10} /> Run ↗
+              </button>
+              <button
+                onClick={handleSavePrompt}
+                disabled={isSavingPrompt}
+                className="text-[9px] tracking-[0.12em] uppercase text-neutral-500 px-3 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white transition-colors border-b border-neutral-100 dark:border-neutral-800 flex items-center gap-2"
+              >
+                <Save size={10} /> {isSavingPrompt ? 'Saving...' : 'Save'}
+              </button>
+              <button className="text-[9px] tracking-[0.12em] uppercase text-neutral-500 px-3 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white transition-colors border-b border-neutral-100 dark:border-neutral-800 flex items-center gap-2">
+                <Layers size={10} /> Diff
+              </button>
+              <button className="text-[9px] tracking-[0.12em] uppercase text-neutral-500 px-3 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white transition-colors flex items-center gap-2">
+                <List size={10} /> Presets
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ── Status Bar ── */}
+      <div className="h-6 border-t border-neutral-100 dark:border-neutral-800 flex items-center px-3 gap-4 flex-shrink-0 bg-white dark:bg-neutral-950">
+        {[
+          { dot: "bg-green-400", label: "ready" },
+          { dot: "bg-blue-400", label: `${numFiles} files` },
+          { dot: "bg-purple-400", label: `${numDeps} deps` },
+        ].map((s) => (
+          <div key={s.label} className="flex items-center gap-1.5">
+            <span className={`w-1 h-1 rounded-full ${s.dot}`} />
+            <span className="text-[8px] tracking-[0.1em] text-neutral-500 dark:text-neutral-400">{s.label}</span>
+          </div>
+        ))}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <GitBranch className="w-2.5 h-2.5 text-neutral-400" />
+          <span className="text-[8px] tracking-[0.1em] text-neutral-500 dark:text-neutral-400">v2.1.0</span>
+        </div>
+      </div>
+
+    </div>
+  )
+}
+
+function PanelHeader({ label, num }: { label: string; num: string }) {
+  return (
+    <div className="flex items-center justify-between px-3 h-[34px] border-b border-neutral-100 dark:border-neutral-800 flex-shrink-0 bg-neutral-50/50 dark:bg-neutral-900/30">
+      <span className="text-[9px] tracking-[0.18em] uppercase text-neutral-500 dark:text-neutral-400">{label}</span>
+      <span className="text-[8px] tracking-[0.08em] px-1.5 py-[2px] border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-500 dark:text-neutral-400">{num}</span>
     </div>
   )
 }
